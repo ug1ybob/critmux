@@ -1,0 +1,257 @@
+#!/bin/bash
+set -o errexit -o pipefail -o noclobber
+shopt -s extglob
+
+! getopt --test > /dev/null
+if [[ ${PIPESTATUS[0]} -ne 4 ]]; then
+    # shellcheck disable=SC2016
+    echo '`getopt --test` failed in this environment.'
+    exit 1
+fi
+
+: "${CT_HOME:=$HOME}"
+: "${CT_HOSTNAME:=${HOSTNAME}[critmux]}"
+: "${CT_IMAGE:=ug1ybob/critmux:3.4-0.0.1}"
+: "${CT_LOCALDIR:=$HOME/.config/critmux}"
+: "${CT_NAME:=$(basename "$0")}"
+: "${CT_SHELL:=$SHELL}"
+: "${CT_USER:=$USER}"
+: "${CT_GID:=$(id -g "$CT_USER")}"
+: "${CT_UID:=$(id -u "$CT_USER")}"
+
+CT_CNTPFX="${CT_NAME}${CT_USER}"
+REGEX_NATURAL="^0$|^([1-9][0-9]*)$"
+DOOD_OPTS=( )
+if [ -S /var/run/docker.sock ]; then
+  DOOD_OPTS+=( \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    --group-add "$(stat -c "%g" /var/run/docker.sock)" \
+  )
+fi
+
+mkdir -p "${CT_LOCALDIR}"/{state,"tmp/tmux-${CT_UID}"}
+chmod 0700 "${CT_LOCALDIR}/tmp/tmux-${CT_UID}"
+
+_die() {
+    status=1
+    if [ "$2" != "" ]; then
+      status=$2
+    fi
+    printf '%s\n' "$1" >&2
+    exit "$status"
+}
+
+_usage() {
+    _die "\
+usage: $CT_NAME [-h] [new-session [-s <sid>] | attach-session [-t <sid>] | kill-session [-t <sid>] | list-sessions]\
+" 0
+}
+
+_run() {
+    mkdir -p "${CT_LOCALDIR}/state/${1}"
+    docker run \
+        "${DOOD_OPTS[@]}" \
+        -it --rm --privileged \
+        -v "${CT_HOME}:${CT_HOME}" \
+        -v "${CT_LOCALDIR}/state/${1}:/state" \
+        -v "${CT_LOCALDIR}/tmp/tmux-${CT_UID}:/tmp/tmux-${CT_UID}" \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -w "$CT_HOME" \
+        -e "ct_session_s=${1}" \
+        -e "SHELL=${CT_SHELL}" \
+        -e XDG_RUNTIME_DIR=/tmp/criu \
+        -u "${CT_UID}:${CT_GID}" \
+        --network host \
+        --hostname="$CT_HOSTNAME" \
+        --name "${CT_CNTPFX}${1}" \
+        --tmpfs /tmp/criu \
+            "$CT_IMAGE"
+}
+
+_lgksession() {
+    _sessions |tail -1
+}
+
+_lsession() {
+    last="$(_lgksession)"
+    if [ "$last" = "" ]; then
+        echo "0"
+    else
+        echo "$last"
+    fi
+}
+
+_nsession() {
+    last="$(_lgksession)"
+    if [ "$last" = "" ]; then
+        echo "0"
+    else
+        echo "$((last + 1))"
+    fi
+}
+
+_sessions() {
+    while read -r sdir; do {
+        basename "$sdir";
+    }; done < <(find "${CT_LOCALDIR}/state" -regex '.*/[0-9]+/pstree.img' -type f -printf '%h\n') |sort -n
+}
+
+myname=$(basename "$0")
+mkdir -p "$CT_LOCALDIR"
+
+_attach_session() {
+    if [ "$ct_session_t" = "" ]; then
+        sid="$(_lsession)"
+    else
+        sid="$ct_session_t"
+    fi
+    if docker inspect "${CT_CNTPFX}${sid}" >/dev/null 2>&1; then
+        _die "Error: $CT_NAME session $sid already attached."
+    else
+        if [ -f "${CT_LOCALDIR}/state/${sid}/pstree.img" ]; then
+            _run "$sid"
+        else
+            _die "no sessions"
+        fi
+    fi
+}
+
+_kill_session() {
+    if [ "$ct_session_t" = "" ]; then
+        sid="$(_lsession)"
+    else
+        sid="$ct_session_t"
+    fi
+    if [ -d "${CT_LOCALDIR}/state/${sid}" ]; then
+        if docker inspect "${CT_CNTPFX}${sid}" >/dev/null 2>&1; then
+            docker rm -f "${CT_CNTPFX}${sid}" >/dev/null
+        fi
+        rm -rf "${CT_LOCALDIR}/state/${sid}"
+    else
+        _die "Error: No $CT_NAME state of session $sid found."
+    fi
+}
+
+_list_sessions() {
+    while read -r sid; do {
+        echo -n "$sid";
+        printf "%(: ? windows (created %a %b %d %T %Y))T" "$(stat -c "%W" "${CT_LOCALDIR}/state/${sid}/pstree.img")";
+        docker inspect -f " (attached)" "${CT_CNTPFX}${sid}" 2>/dev/null || true;
+    }; done < <(_sessions)
+}
+
+_new_session() {
+    if [ "$1" = "" ]; then
+        sid="$(_nsession)"
+    else
+        sid="$1"
+    fi
+    if [ -f "${CT_LOCALDIR}/state/${sid}/pstree.img" ]; then
+      _die "Error: $CT_NAME state of session $sid found. Try $myname a, or $myname kill-session."
+    else
+      _run "$sid"
+    fi
+}
+
+,() {
+    _new_session 
+}
+
+,a() {
+    _attach_session "$@"
+}
+
+,attach() {
+    _attach_session "$@"
+}
+
+,attach-session() {
+    _attach_session "$@"
+}
+
+,kill-session() {
+    _kill_session "$@"
+}
+
+,ls() {
+    _list_sessions "$@"
+}
+
+,list-sessions() {
+    _list_sessions "$@"
+}
+
+,new() {
+    _new_session "$ct_session_s"
+}
+
+,new-session() {
+    _new_session "$ct_session_s"
+}
+
+mapfile -t ct_cmd_list < <( declare -F |awk '! /^_/{gsub(",","");print $3}' )
+ct_cmd_pattern="$(IFS=\| ; echo "${ct_cmd_list[*]}")"
+ct_cmd=$(for arg in "$@"; do if [[ $arg =~ ^-.* ]]; then :; else echo -n "$arg"; break; fi; done)
+case $ct_cmd in
+  @($ct_cmd_pattern)|"")
+    
+    LONGOPTS=help
+    OPTIONS=ht:
+
+    ! PARSED=$(getopt --options="$OPTIONS" --longoptions="$LONGOPTS" --name "$CT_NAME" -- "$@")
+    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+        exit 2
+    fi
+
+    eval set -- "$PARSED"
+
+    # set switches defaults and process user input
+    ct_session_s="0"
+    ct_session_t=""
+    while true; do
+        case "$1" in
+            -h|--help)
+                _usage
+                ;;
+
+            -s)
+                if ! [[ $2 =~ $REGEX_NATURAL ]]; then
+                  _die "Session name should be a natural number."
+                fi
+                ct_session_s="$2"
+                shift
+                shift
+                ;;
+
+            -t)
+                if ! [[ $2 =~ $REGEX_NATURAL ]]; then
+                  _die "Session name should be a natural number."
+                fi
+                ct_session_t="$2"
+                shift
+                shift
+                ;;
+
+            --)
+                shift
+                break
+                ;;
+
+            *)
+                _die "Programming error." 3
+                ;;
+
+        esac
+    done
+#    _validate "$@"
+    if [ "$ct_cmd" != "" ]; then
+        shift
+    fi
+    ",${ct_cmd}" "$@"
+    ;;
+
+  *)
+    _die "unknown command: $ct_cmd"
+    ;;
+
+esac
