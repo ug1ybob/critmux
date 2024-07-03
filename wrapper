@@ -34,6 +34,7 @@ def main():
         system(f"criu restore --images-dir /state --restore-detached --tcp-close {prvmode}")
         system("tmux attach")
     else:
+        system("criu check 2>/dev/null")
         sid = os.environ.get("ct_session_s", "0")
         system(f"tmux new-session -d -s {sid}")
         pid = subprocess.check_output(["pidof", "tmux"]).decode("ascii").strip()

@@ -11,7 +11,7 @@ fi
 
 : "${CT_HOME:=$HOME}"
 : "${CT_HOSTNAME:=${HOSTNAME}[critmux]}"
-: "${CT_IMAGE:=ug1ybob/critmux:3.4-0.0.1}"
+: "${CT_IMAGE:=ug1ybob/critmux:3.4-0.0.2}"
 : "${CT_LOCALDIR:=$HOME/.config/critmux}"
 : "${CT_NAME:=$(basename "$0")}"
 : "${CT_SHELL:=$SHELL}"
@@ -194,9 +194,8 @@ ct_cmd_pattern="$(IFS=\| ; echo "${ct_cmd_list[*]}")"
 ct_cmd=$(for arg in "$@"; do if [[ $arg =~ ^-.* ]]; then :; else echo -n "$arg"; break; fi; done)
 case $ct_cmd in
   @($ct_cmd_pattern)|"")
-    
     LONGOPTS=help
-    OPTIONS=ht:
+    OPTIONS=hs:t:
 
     ! PARSED=$(getopt --options="$OPTIONS" --longoptions="$LONGOPTS" --name "$CT_NAME" -- "$@")
     if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
@@ -243,10 +242,11 @@ case $ct_cmd in
 
         esac
     done
-#    _validate "$@"
+
     if [ "$ct_cmd" != "" ]; then
         shift
     fi
+
     ",${ct_cmd}" "$@"
     ;;
 
