@@ -1,25 +1,18 @@
-FROM ubuntu:20.04
-RUN apt-get -q update
-RUN apt-get -qy install bsdmainutils
-RUN apt-get -qy install build-essential
-RUN apt-get -qy install curl
-RUN apt-get -qy install libbsd-dev
-RUN apt-get -qy install libcap-dev
-RUN apt-get -qy install libnet-dev
-RUN apt-get -qy install libnl-3-dev
-RUN apt-get -qy install libprotobuf-c-dev
-RUN apt-get -qy install libprotobuf-dev
-RUN apt-get -qy install linux-headers-generic
-RUN DEBIAN_FRONTEND=nontineractive apt-get -qy install pkg-config
-RUN apt-get -qy install protobuf-c-compiler
-RUN apt-get -qy install protobuf-compiler
-RUN apt-get -qy install python3
-RUN apt-get -qy install tmux
-RUN mkdir /src
-WORKDIR /src
-ENV CRIU 3.15
-RUN curl http://download.openvz.org/criu/criu-$CRIU.tar.bz2 | tar -jxf-
-RUN make -C criu-$CRIU
-RUN cp criu-$CRIU/criu/criu /usr/local/sbin
+FROM ubuntu:24.04
+RUN apt update -q --fix-missing \
+ && DEBIAN_FRONTEND=nontineractive apt install -qy --no-install-recommends curl gpg-agent software-properties-common \
+ && add-apt-repository -y ppa:criu/ppa \
+ && install -m 0755 -d /etc/apt/keyrings \
+ && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
+ && chmod a+r /etc/apt/keyrings/docker.asc \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" |tee /etc/apt/sources.list.d/docker.list > /dev/null \
+ && apt update -q --fix-missing \
+ && DEBIAN_FRONTEND=nontineractive apt remove -qy software-properties-common \
+ && DEBIAN_FRONTEND=nontineractive apt install -qy --no-install-recommends criu docker-ce-cli gawk git iptables jq less libcap2-bin openssh-client patch pigz python3 python3-venv rsync tmux=3.4-1build1 vim wget \
+ && setcap 'cap_checkpoint_restore+eip cap_sys_admin+eip' $(which criu) \
+ && apt-get clean autoclean \
+ && apt-get autoremove --yes \
+ && rm -rf /var/lib/apt/lists/*
 ADD wrapper /usr/local/sbin/
 CMD ["wrapper"]

@@ -1,30 +1,42 @@
 #!/usr/bin/env python3
-import errno
+'''
+critmux:
+criu tmux docker wrapper
+'''
 import os
-import shlex
 import signal
 import subprocess
 
 def system(cmd):
-	return subprocess.check_call(cmd, shell=True)
+    '''Run system command, return the output'''
+    return subprocess.check_call(cmd, shell=True)
+
+def main():
+    '''The main program body'''
+    prvmode = "--unprivileged" if os.geteuid() != 0 else ""
+    if not os.path.isdir("/state"):
+        os.mkdir("/state")
+
+    if len(os.listdir("/state")) != 0:
+        system(f"criu restore --images-dir /state --restore-detached --tcp-close {prvmode}")
+        system("tmux attach")
+    else:
+        sid = os.environ.get("ct_session_s", "0")
+        system(f"tmux new-session -d -s {sid}")
+        pid = subprocess.check_output(["pidof", "tmux"]).decode("ascii").strip()
+        system(f"criu dump -R --tree {pid} --images-dir /state {prvmode} && tmux attach")
+
+    try:
+        pid = subprocess.check_output(["pidof", "tmux"])
+    except subprocess.CalledProcessError:
+        pid = None
+    if pid:
+        pid = pid.decode("ascii").strip()
+        print("Found TMUX. Freezing state.")
+        system("rm -rf /state/*")
+        system(f"criu dump --tree {pid} --tcp-close --images-dir /state {prvmode}")
+    else:
+        print("No TMUX found. Doing nothing.")
 
 signal.signal(signal.SIGTERM, lambda signum, frame: system("tmux detach"))
-
-if os.path.isdir("/state"):
-	system("criu restore --images-dir /state --restore-detached")
-	system("tmux attach")
-else:
-	system("tmux")
-
-try:
-	pid = subprocess.check_output(["pidof", "tmux"])
-except:
-	pid = None
-if pid:
-	pid = pid.decode("ascii").strip()
-	print("Found TMUX. Freezing state.")
-	system("rm -rf /state")
-	os.mkdir("/state")
-	system("criu dump --tree {} --images-dir /state".format(pid))
-else:
-	print("No TMUX found. Doing nothing.")
+main()
