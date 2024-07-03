@@ -11,7 +11,7 @@ fi
 
 : "${CT_HOME:=$HOME}"
 : "${CT_HOSTNAME:=${HOSTNAME}[critmux]}"
-: "${CT_IMAGE:=ug1ybob/critmux:3.4-0.0.2}"
+: "${CT_IMAGE:=ug1ybob/critmux:3.4-0.0.3}"
 : "${CT_LOCALDIR:=$HOME/.config/critmux}"
 : "${CT_NAME:=$(basename "$0")}"
 : "${CT_SHELL:=$SHELL}"
